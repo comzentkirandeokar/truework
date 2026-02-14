@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Real-Time Drivers</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .driver { margin-bottom: 5px; padding: 5px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+
+<h2>Real-Time Driver Tracking</h2>
+
+<label>Driver ID (you): <input type="number" id="driverId" value="101"></label><br>
+<button id="sendLocation">Send My Location</button>
+
+<div id="drivers">
+    <h3>All Drivers:</h3>
+</div>
+
+<div id="nearbyDrivers">
+    <h3>Drivers within 5 km:</h3>
+</div>
+
+<script>
+let ws = new WebSocket("ws://localhost:8000"); // Change to your WS server URL
+
+let driverLocations = {}; // { driverId: { lat, lng } }
+let nearbyDrivers = {};   // { driverId: { lat, lng } }
+
+// Haversine formula to calculate distance in km
+function getDistance(lat1, lng1, lat2, lng2) {
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+        Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+ws.onopen = () => {
+    console.log("Connected ✅");
+
+    const driverId = document.getElementById("driverId").value;
+    ws.send(JSON.stringify({ type: "register", userId: driverId }));
+};
+
+ws.onmessage = (event) => {
+    try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "location") {
+            const { driverId, lat, lng } = data;
+            driverLocations[driverId] = { lat, lng };
+            renderAllDrivers();
+
+            filterNearbyDrivers();
+        }
+
+        if (data.type === "allDrivers") {
+            driverLocations = data.locations;
+            renderAllDrivers();
+            filterNearbyDrivers();
+        }
+
+        if (data.type === "nearby") {
+            nearbyDrivers = {};
+            data.users.forEach(user => {
+                nearbyDrivers[user.user_id] = { lat: user.latitude, lng: user.longitude };
+            });
+            renderNearbyDrivers();
+        }
+
+    } catch (err) {
+        console.error("Invalid JSON:", event.data);
+    }
+};
+
+// Render all drivers
+function renderAllDrivers() {
+    const container = document.getElementById("drivers");
+    container.innerHTML = "<h3>All Drivers:</h3>";
+    for (let id in driverLocations) {
+        const loc = driverLocations[id];
+        const div = document.createElement("div");
+        div.className = "driver";
+        div.textContent = `Driver ${id}: ${loc.lat}, ${loc.lng}`;
+        container.appendChild(div);
+    }
+}
+
+// Render nearby drivers
+function renderNearbyDrivers() {
+    const container = document.getElementById("nearbyDrivers");
+    container.innerHTML = "<h3>Drivers within 5 km:</h3>";
+    for (let id in nearbyDrivers) {
+        const loc = nearbyDrivers[id];
+        const div = document.createElement("div");
+        div.className = "driver";
+        div.textContent = `Driver ${id}: ${loc.lat}, ${loc.lng}`;
+        container.appendChild(div);
+    }
+}
+
+// Filter nearby drivers manually (if server doesn't provide "nearby" list)
+function filterNearbyDrivers() {
+    const myId = document.getElementById("driverId").value;
+    if (!driverLocations[myId]) return;
+    const myLoc = driverLocations[myId];
+    nearbyDrivers = {};
+
+    for (let id in driverLocations) {
+        if (id === myId) continue;
+        const loc = driverLocations[id];
+        const distance = getDistance(myLoc.lat, myLoc.lng, loc.lat, loc.lng);
+        if (distance <= 5) {
+            nearbyDrivers[id] = loc;
+        }
+    }
+
+    renderNearbyDrivers();
+}
+
+// Send driver’s location
+document.getElementById("sendLocation").addEventListener("click", () => {
+    const driverId = document.getElementById("driverId").value;
+    const lat = (28.60 + Math.random() * 0.02).toFixed(5);
+    const lng = (77.20 + Math.random() * 0.02).toFixed(5);
+
+    ws.send(JSON.stringify({
+        type: "location",
+        driverId,
+        lat,
+        lng
+    }));
+
+    console.log(`Driver ${driverId} sent location: ${lat}, ${lng}`);
+});
+</script>
+
+</body>
+</html>
