@@ -7,8 +7,21 @@ function initWebSocket(server) {
     });
 
     wss.on('connection', ws => {
-        ws.on('message', message => handleMessage(ws, message));
-        ws.on('close', () => handleDisconnect(ws));
+
+        console.log("New client connected");
+
+        ws.on('message', message => {
+            handleMessage(ws, message);
+        });
+
+        ws.on('close', () => {
+            handleDisconnect(ws);
+        });
+
+        ws.on('error', (err) => {
+            console.error("WebSocket error:", err);
+        });
+
     });
 }
 
