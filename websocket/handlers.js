@@ -13,10 +13,10 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const dLon = (lon2 - lon1) * Math.PI / 180;
 
     const a =
-        Math.sin(dLat/2) ** 2 +
+        Math.sin(dLat / 2) ** 2 +
         Math.cos(lat1 * Math.PI / 180) *
         Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon/2) ** 2;
+        Math.sin(dLon / 2) ** 2;
 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
@@ -30,32 +30,48 @@ function getTraceKey(userA, userB) {
 }
 
 // --------------------
-// 🔥 Notify Nearby Users
+// 🔥 Notify Nearby Users (Full List)
 // --------------------
-async function notifyNearbyUsers(userId) {
+async function notifyNearbyUsers(changedUserId) {
     try {
-        const { userALocation } = await getTwoUsersLocations(userId, userId);
+        const { userALocation } = await getTwoUsersLocations(changedUserId, changedUserId);
         if (!userALocation) return;
 
         const { latitude, longitude } = userALocation;
 
+        // Get users near the changed user
         const nearbyUsers = await getNearbyUsers(
             latitude,
             longitude,
-            5,
+            5, // distance in km
             null,
-            userId
+            changedUserId
         );
 
         for (const user of nearbyUsers) {
             const client = clients[user.userId];
-            if (client) {
-                client.send(JSON.stringify({
-                    type: "nearby_update",
-                    userId,
-                    status: clients[userId] ? "online" : "offline"
-                }));
-            }
+            if (!client) continue;
+
+            // Recalculate THEIR nearby list
+            const { userALocation: otherLocation } =
+                await getTwoUsersLocations(user.userId, user.userId);
+            if (!otherLocation) continue;
+
+            const updatedNearby = await getNearbyUsers(
+                otherLocation.latitude,
+                otherLocation.longitude,
+                5,
+                null,
+                user.userId
+            );
+
+            const registeredNearbyUsers =
+                updatedNearby.filter(u => clients[u.userId]);
+
+            client.send(JSON.stringify({
+                type: "nearby",
+                users: registeredNearbyUsers
+            }));
         }
 
     } catch (err) {
@@ -138,7 +154,9 @@ async function sendTraceUpdate(trace) {
             delete activeTraces[getTraceKey(userA, userB)];
         }
 
-    } catch (e) {}
+    } catch (e) {
+        console.error("sendTraceUpdate error:", e);
+    }
 }
 
 // --------------------
@@ -172,10 +190,10 @@ function unregisterUser(ws, userId) {
         return;
     }
 
-    delete clients[userId];
-
-    // 🔥 Notify nearby users
+    // 🔥 Notify nearby users BEFORE deletion
     notifyNearbyUsers(userId);
+
+    delete clients[userId];
 
     for (const key in activeTraces) {
         const trace = activeTraces[key];
@@ -243,7 +261,7 @@ function handleMessage(ws, message) {
             publish(`user-${data.userId}`, { type: "location", ...data });
             broadcastLocation(data.userId, data.lat, data.lng);
 
-            // Optional: update nearby on movement
+            // 🔥 Notify nearby users on movement
             notifyNearbyUsers(data.userId);
         }
 
@@ -282,13 +300,13 @@ function handleDisconnect(ws) {
 
     for (let userId in clients) {
         if (clients[userId] === ws) {
+
+            // 🔥 Notify nearby users BEFORE deletion
+            notifyNearbyUsers(userId);
+
             delete clients[userId];
 
             console.log(`User disconnected: ${userId}`);
-
-            // 🔥 Notify nearby users
-            notifyNearbyUsers(userId);
-
             break;
         }
     }
