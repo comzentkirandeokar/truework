@@ -13,13 +13,37 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const dLon = (lon2 - lon1) * Math.PI / 180;
 
     const a =
-        Math.sin(dLat / 2) ** 2 +
+        Math.sin(dLat/2) ** 2 +
         Math.cos(lat1 * Math.PI / 180) *
         Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) ** 2;
+        Math.sin(dLon/2) ** 2;
 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
+}
+
+async function sendNearbyUpdateForUser(userId) {
+    const ws = clients[userId];
+    if (!ws) return;
+
+    // Get this user's last saved location
+    const { userALocation } = await getTwoUsersLocations(userId, userId);
+    if (!userALocation) return;
+
+    const users = await getNearbyUsers(
+        userALocation.latitude,
+        userALocation.longitude,
+        5,              // default distance (km) — change if needed
+        null,           // category
+        userId
+    );
+
+    const registeredNearbyUsers = users.filter(user => clients[user.userId]);
+
+    ws.send(JSON.stringify({
+        type: "nearby_update",
+        users: registeredNearbyUsers
+    }));
 }
 
 // --------------------
@@ -27,56 +51,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 // --------------------
 function getTraceKey(userA, userB) {
     return [userA, userB].sort().join("_");
-}
-
-// --------------------
-// 🔥 Notify Nearby Users (Full List)
-// --------------------
-async function notifyNearbyUsers(changedUserId) {
-    try {
-        const { userALocation } = await getTwoUsersLocations(changedUserId, changedUserId);
-        if (!userALocation) return;
-
-        const { latitude, longitude } = userALocation;
-
-        // Get users near the changed user
-        const nearbyUsers = await getNearbyUsers(
-            latitude,
-            longitude,
-            5, // distance in km
-            null,
-            changedUserId
-        );
-
-        for (const user of nearbyUsers) {
-            const client = clients[user.userId];
-            if (!client) continue;
-
-            // Recalculate THEIR nearby list
-            const { userALocation: otherLocation } =
-                await getTwoUsersLocations(user.userId, user.userId);
-            if (!otherLocation) continue;
-
-            const updatedNearby = await getNearbyUsers(
-                otherLocation.latitude,
-                otherLocation.longitude,
-                5,
-                null,
-                user.userId
-            );
-
-            const registeredNearbyUsers =
-                updatedNearby.filter(u => clients[u.userId]);
-
-            client.send(JSON.stringify({
-                type: "nearby",
-                users: registeredNearbyUsers
-            }));
-        }
-
-    } catch (err) {
-        console.error("notifyNearbyUsers error:", err);
-    }
 }
 
 // --------------------
@@ -94,6 +68,7 @@ async function broadcastLocation(userId, lat, lng) {
         }
     }
 
+    // Update traces involving this user
     for (const key in activeTraces) {
         const trace = activeTraces[key];
         if (trace.users.includes(userId)) {
@@ -113,26 +88,33 @@ async function sendTraceUpdate(trace) {
     const userAOnline = !!clients[userA];
     const userBOnline = !!clients[userB];
 
+    // Both offline → remove trace
     if (!userAOnline && !userBOnline) {
         delete activeTraces[getTraceKey(userA, userB)];
         return;
     }
 
     try {
+        // One offline → send only online user's location
         if (!userAOnline || !userBOnline) {
             const onlineUser = userAOnline ? userA : userB;
             const onlineLocation = userAOnline ? userALocation : userBLocation;
+
             if (!onlineLocation) return;
 
             trace.ws.send(JSON.stringify({
                 type: "trace_locations",
-                users: [{ userId: onlineUser, ...onlineLocation }],
+                users: [
+                    { userId: onlineUser, ...onlineLocation }
+                ],
                 distance: null,
                 status: "single_user"
             }));
+
             return;
         }
 
+        // Both online → normal trace
         if (!userALocation || !userBLocation) return;
 
         const distance = getDistance(
@@ -154,9 +136,7 @@ async function sendTraceUpdate(trace) {
             delete activeTraces[getTraceKey(userA, userB)];
         }
 
-    } catch (e) {
-        console.error("sendTraceUpdate error:", e);
-    }
+    } catch (e) {}
 }
 
 // --------------------
@@ -172,9 +152,15 @@ function startTrace(ws, userA, userB, threshold = 0.05) {
     }
 
     const key = getTraceKey(userA, userB);
+
     if (activeTraces[key]) return;
 
-    activeTraces[key] = { ws, users: [userA, userB], threshold };
+    activeTraces[key] = {
+        ws,
+        users: [userA, userB],
+        threshold
+    };
+
     sendTraceUpdate(activeTraces[key]);
 }
 
@@ -190,11 +176,9 @@ function unregisterUser(ws, userId) {
         return;
     }
 
-    // 🔥 Notify nearby users BEFORE deletion
-    notifyNearbyUsers(userId);
-
     delete clients[userId];
 
+    // Notify trace sockets that this user went offline
     for (const key in activeTraces) {
         const trace = activeTraces[key];
         if (trace.users.includes(userId)) {
@@ -204,6 +188,7 @@ function unregisterUser(ws, userId) {
                     message: `${userId} went offline`
                 }));
             } catch (e) {}
+            // Do NOT delete trace; sendTraceUpdate will handle single-user logic
         }
     }
 
@@ -239,8 +224,15 @@ function handleMessage(ws, message) {
 
             console.log(`User registered: ${data.userId}`);
 
-            // 🔥 Notify nearby users
-            notifyNearbyUsers(data.userId);
+            // 🔥 NEW: Update nearby users for this user
+            sendNearbyUpdateForUser(data.userId);
+
+            // 🔥 NEW: Update nearby users for all other users
+            for (let id in clients) {
+                if (id !== data.userId) {
+                    sendNearbyUpdateForUser(id);
+                }
+            }
         }
 
         // SUBSCRIBE
@@ -256,28 +248,34 @@ function handleMessage(ws, message) {
         }
 
         // LOCATION UPDATE
+       
         if (data.type === "location" && data.userId && data.lat != null && data.lng != null) {
             saveUserLocation(data.userId, data.lat, data.lng);
             publish(`user-${data.userId}`, { type: "location", ...data });
             broadcastLocation(data.userId, data.lat, data.lng);
 
-            // 🔥 Notify nearby users on movement
-            notifyNearbyUsers(data.userId);
+            // 🔥 NEW: update nearby list for everyone
+            sendNearbyUpdateForUser(data.userId);
+
+            for (let id in clients) {
+                if (id !== data.userId) {
+                    sendNearbyUpdateForUser(id);
+                }
+            }
         }
 
         // NEARBY
         if (data.type === "nearby" && data.lat != null && data.lng != null) {
-            getNearbyUsers(data.lat, data.lng, data.distance, data.category, data.userId)
-                .then(users => {
-                    const registeredNearbyUsers = users.filter(user => clients[user.userId]);
-                    ws.send(JSON.stringify({
-                        type: "nearby",
-                        users: registeredNearbyUsers
-                    }));
-                });
+            getNearbyUsers(data.lat, data.lng, data.distance, data.category, data.userId).then(users => {
+                const registeredNearbyUsers = users.filter(user => clients[user.userId]);
+                ws.send(JSON.stringify({
+                    type: "nearby",
+                    users: registeredNearbyUsers
+                }));
+            });
         }
 
-        // TRACE
+        // MANUAL TRACE
         if (data.type === "trace" && data.userId && data.nextUser) {
             startTrace(ws, data.userId, data.nextUser, data.threshold ?? 0.05);
         }
@@ -285,6 +283,14 @@ function handleMessage(ws, message) {
         // UNREGISTER
         if (data.type === "unregister" && data.userId) {
             unregisterUser(ws, data.userId);
+            // 🔥 NEW: update nearby list for everyone
+            sendNearbyUpdateForUser(data.userId);
+
+            for (let id in clients) {
+                if (id !== data.userId) {
+                    sendNearbyUpdateForUser(id);
+                }
+            }
         }
 
     } catch (err) {
@@ -300,13 +306,10 @@ function handleDisconnect(ws) {
 
     for (let userId in clients) {
         if (clients[userId] === ws) {
-
-            // 🔥 Notify nearby users BEFORE deletion
-            notifyNearbyUsers(userId);
-
             delete clients[userId];
-
             console.log(`User disconnected: ${userId}`);
+
+            // Active traces will downgrade automatically
             break;
         }
     }
