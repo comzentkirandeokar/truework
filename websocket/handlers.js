@@ -47,7 +47,7 @@ async function updateNearbyWatchers() {
                 users.filter(user => clients[user.userId]);
 
             ws.send(JSON.stringify({
-                type: "nearby_update",
+                type: "nearby",
                 users: registeredNearbyUsers
             }));
 
@@ -113,7 +113,7 @@ async function sendTraceUpdate(trace) {
             if (!onlineLocation) return;
 
             trace.ws.send(JSON.stringify({
-                type: "trace_locations",
+                type: "trace",
                 users: [{ userId: onlineUser, ...onlineLocation }],
                 distance: null,
                 status: "single_user"
@@ -132,7 +132,7 @@ async function sendTraceUpdate(trace) {
         );
 
         trace.ws.send(JSON.stringify({
-            type: "trace_locations",
+            type: "trace",
             users: [
                 { userId: userA, ...userALocation, is_it_you: true },
                 { userId: userB, ...userBLocation, is_it_you: false }
