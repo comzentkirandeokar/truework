@@ -203,11 +203,35 @@ function handleMessage(ws, message) {
 
         // REGISTER
         if (data.type === "register" && data.userId) {
-            if (clients[data.userId]) {
-                unregisterUser(clients[data.userId], data.userId);
-            }
+           if (data.type === "register" && data.userId) {
 
-            clients[data.userId] = ws;
+    const userKey = String(data.userId);
+
+    // Remove old connection if user is already connected
+    if (clients[userKey]) {
+        try {
+            clients[userKey].close();
+        } catch (e) {}
+
+        delete clients[userKey];
+    }
+
+    clients[userKey] = ws;
+    ws.userId = userKey;
+
+    ws.send(JSON.stringify({
+        type: "registered",
+        userId: userKey
+    }));
+
+    console.log(`User registered: ${userKey}`);
+    console.log(
+        "Connected users:",
+        Object.keys(clients)
+    );
+
+    updateNearbyWatchers();
+}
 
             ws.send(JSON.stringify({
                 type: "registered",
