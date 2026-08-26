@@ -301,4 +301,86 @@ function handleDisconnect(ws) {
     }
 }
 
+// --------------------
+// Send Realtime Event To User
+// --------------------
+
+function emitToUser(userId, event, data = {}) {
+
+    const userKey = String(userId);
+
+    const ws = clients[userKey];
+
+
+    // User is not connected
+    if (!ws) {
+
+        console.log(
+            `Realtime user not connected: ${userKey}`
+        );
+
+        return {
+            success: false,
+            delivered: false,
+            message: 'User is not connected'
+        };
+
+    }
+
+
+    // WebSocket is not open
+    if (ws.readyState !== 1) {
+
+        console.log(
+            `Realtime socket is not open for user: ${userKey}`
+        );
+
+        return {
+            success: false,
+            delivered: false,
+            message: 'User WebSocket is not open'
+        };
+
+    }
+
+
+    try {
+
+        const message = {
+            type: event,
+            ...data
+        };
+
+
+        ws.send(
+            JSON.stringify(message)
+        );
+
+
+        console.log(
+            `Realtime event sent: ${event} → user ${userKey}`
+        );
+
+
+        return {
+            success: true,
+            delivered: true
+        };
+
+    } catch (error) {
+
+        console.error(
+            `Realtime send error for user ${userKey}:`,
+            error
+        );
+
+        return {
+            success: false,
+            delivered: false,
+            message: 'Failed to send WebSocket message'
+        };
+
+    }
+
+}
 module.exports = { handleMessage, handleDisconnect, clients };
