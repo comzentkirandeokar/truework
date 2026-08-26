@@ -1,7 +1,7 @@
 const { subscribe, unsubscribeFromTopic, unsubscribeAll, publish } = require('./topics');
 const { saveUserLocation, getNearbyUsers, getTwoUsersLocations } = require('../helpers/userLocation');
 
-let clients = {};
+const clients = {};
 let activeTraces = {};
 let nearbyWatchers = {}; // Track users who requested nearby
 
