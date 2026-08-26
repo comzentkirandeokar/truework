@@ -383,4 +383,9 @@ function emitToUser(userId, event, data = {}) {
     }
 
 }
-module.exports = { handleMessage, handleDisconnect, clients };
+module.exports = {
+    handleMessage,
+    handleDisconnect,
+    clients,
+    emitToUser
+};
