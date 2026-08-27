@@ -2,35 +2,15 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
-const cors = require('cors');
 const WebSocket = require('ws');
-const mysql = require('mysql2/promise');
+const mysql = require('mysql2/promise'); // <-- Add this
 
 const app = express();
-
-// ============================================================
-// MIDDLEWARE
-// ============================================================
-
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    credentials: true
-}));
-
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Log all requests for debugging
-app.use((req, res, next) => {
-    console.log(`📨 ${req.method} ${req.url}`);
-    next();
-});
+const PORT = process.env.PORT || 8001;
 
-// ============================================================
-// DATABASE CONNECTION POOL
-// ============================================================
-
+// Database connection pool
 const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
@@ -41,18 +21,12 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// ============================================================
-// STORE CONNECTED CLIENTS
-// ============================================================
-
 let clients = {};
 let driverLocations = {};
 
 // ============================================================
 // ROUTES
 // ============================================================
-
-// Emit realtime event to user
 app.post('/api/realtime/emit', (req, res) => {
     const { userId, event, data } = req.body;
     const apiKey = req.headers['x-api-key'];
@@ -102,7 +76,6 @@ app.post('/api/realtime/emit', (req, res) => {
     }
 });
 
-// Health check endpoint
 app.get('/api/realtime/health', (req, res) => {
     res.json({
         status: 'ok',
@@ -131,27 +104,21 @@ app.get('/api/realtime/db-test', async (req, res) => {
     }
 });
 
-// 404 Handler
 app.use((req, res) => {
-    console.log(`❌ 404 Not Found: ${req.method} ${req.url}`);
     res.status(404).json({
         error: 'Not Found',
         method: req.method,
-        url: req.url,
-        message: `Cannot ${req.method} ${req.url}`
+        url: req.url
     });
 });
 
 // ============================================================
 // WEBSOCKET SERVER
 // ============================================================
-
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
 wss.on('connection', (ws) => {
-    console.log('🔌 New WebSocket connection');
-
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
@@ -174,9 +141,6 @@ wss.on('connection', (ws) => {
                     type: "allDrivers",
                     locations: driverLocations
                 }));
-
-                console.log(`✅ User registered: ${userId}`);
-                console.log(`📋 All clients: ${Object.keys(clients)}`);
             }
 
             // ============================================================
@@ -252,17 +216,15 @@ wss.on('connection', (ws) => {
                 const { driverId, lat, lng } = data;
                 driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
 
-                // Update database with worker location
                 try {
                     await pool.query(
                         'UPDATE users SET lat = ?, lng = ?, last_location_update = NOW() WHERE id = ?',
                         [lat, lng, driverId]
                     );
                 } catch (updateError) {
-                    // Silent fail for location updates
+                    // Silent fail
                 }
 
-                // Broadcast to all clients
                 wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify({
@@ -273,12 +235,10 @@ wss.on('connection', (ws) => {
                         }));
                     }
                 });
-
-                console.log(`📍 Driver ${driverId} location updated: ${lat}, ${lng}`);
             }
 
         } catch (err) {
-            console.error("❌ Error parsing message:", err);
+            console.error("❌ Error:", err);
             ws.send(JSON.stringify({
                 type: "error",
                 message: "Invalid request format"
@@ -290,26 +250,15 @@ wss.on('connection', (ws) => {
         for (let userId in clients) {
             if (clients[userId] === ws) {
                 delete clients[userId];
-                console.log(`❌ User disconnected: ${userId}`);
-                console.log(`📋 Remaining clients: ${Object.keys(clients)}`);
                 break;
             }
         }
-    });
-
-    ws.on('error', (error) => {
-        console.error('❌ WebSocket error:', error);
     });
 });
 
 // ============================================================
 // START SERVER
 // ============================================================
-
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-    console.log(`🚀 Server listening on port ${PORT}`);
-    console.log(`   WebSocket: wss://<your-url>/ws`);
-    console.log(`   HTTP:      https://<your-url>/api/realtime/emit`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
 });
