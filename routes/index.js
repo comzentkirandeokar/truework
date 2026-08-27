@@ -20,17 +20,32 @@ router.get('/api/realtime/health', (req, res) => {
     });
 });
 
+// Temporary debug endpoint — shows the length + first/last 2 chars
+// of the key Node has actually loaded from the environment, without
+// exposing the full secret. Remove once the key mismatch is confirmed fixed.
+router.get('/api/realtime/debug-key', (req, res) => {
+    const key = (process.env.WEBSOCKET_API_KEY || 'your-secret-key').trim();
+    res.json({
+        length: key.length,
+        first2: key.slice(0, 2),
+        last2: key.slice(-2)
+    });
+});
+
 // Emit realtime event to user
 router.post('/api/realtime/emit', (req, res) => {
     console.log('📩 Received realtime emit request:', req.body);
-    
+
     const { userId, event, data } = req.body;
-    const apiKey = req.headers['x-api-key'] || req.headers['X-API-KEY'];
-    
-    // Validate API key
-    const validApiKey = process.env.WEBSOCKET_API_KEY || 'your-secret-key';
-    if (apiKey !== validApiKey) {
+    const apiKey = req.headers['x-api-key'];
+
+    // Validate API key (trimmed on both sides to avoid whitespace mismatches)
+    const validApiKey = (process.env.WEBSOCKET_API_KEY || 'your-secret-key').trim();
+    const providedKey = (apiKey || '').trim();
+
+    if (providedKey !== validApiKey) {
         console.log('❌ Invalid API key');
+        console.log(`   received length=${providedKey.length}, expected length=${validApiKey.length}`);
         return res.status(401).json({
             success: false,
             message: 'Invalid API key'
@@ -41,7 +56,7 @@ router.post('/api/realtime/emit', (req, res) => {
     const { getClients } = require('../websocket');
     const clients = getClients();
     const userIdStr = String(userId);
-    
+
     // Check if user is connected
     if (userId && clients[userIdStr]) {
         try {
@@ -49,9 +64,9 @@ router.post('/api/realtime/emit', (req, res) => {
                 event: event || 'TEST_EVENT',
                 data: data || {}
             };
-            
+
             clients[userIdStr].send(JSON.stringify(payload));
-            
+
             console.log(`✅ Sent ${event} to user ${userIdStr}`);
             return res.json({
                 success: true,
