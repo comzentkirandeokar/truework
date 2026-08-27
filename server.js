@@ -269,9 +269,9 @@ if (data.type === "nearby") {
             params.push(category);
         }
 
-        sql += `
-            HAVING distance <= ?
+       sql += `
             GROUP BY u.member_id
+            HAVING distance <= ?
             ORDER BY distance ASC
             LIMIT 50
         `;
