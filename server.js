@@ -295,32 +295,46 @@ if (data.type === "nearby") {
     }
 }
 
-            // 3. LOCATION UPDATE
-            if (data.type === "location") {
-                const { driverId, lat, lng } = data;
-                driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
+            // 3. LOCATION UPDATE - Save to locations table
+if (data.type === "location") {
+    const { driverId, lat, lng } = data;
+    driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
 
-                try {
-                    // Update member_master table
-                    await pool.query(
-                        'UPDATE member_master SET lat = ?, lng = ? WHERE member_id = ?',
-                        [lat, lng, driverId]
-                    );
-                } catch (updateError) {
-                    // Silent fail
-                }
+    try {
+        // Check if location exists
+        const [existing] = await pool.query(
+            'SELECT id FROM locations WHERE user_id = ?',
+            [driverId]
+        );
 
-                wss.clients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify({
-                            type: "location",
-                            driverId,
-                            lat,
-                            lng
-                        }));
-                    }
-                });
-            }
+        if (existing.length > 0) {
+            await pool.query(
+                'UPDATE locations SET latitude = ?, longitude = ?, created_at = NOW() WHERE user_id = ?',
+                [lat, lng, driverId]
+            );
+        } else {
+            await pool.query(
+                'INSERT INTO locations (user_id, latitude, longitude, created_at) VALUES (?, ?, ?, NOW())',
+                [driverId, lat, lng]
+            );
+        }
+        console.log(`📍 Location saved for user ${driverId}: ${lat}, ${lng}`);
+    } catch (updateError) {
+        console.error('❌ Location update error:', updateError);
+    }
+
+    // Broadcast to all clients
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+                type: "location",
+                driverId,
+                lat,
+                lng
+            }));
+        }
+    });
+}
 
         } catch (err) {
             console.error("❌ Error:", err);
