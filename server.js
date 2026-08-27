@@ -228,74 +228,73 @@ wss.on('connection', (ws) => {
                 }));
             }
 
-            // ============================================================
-            // 2. NEARBY WORKERS - Updated for member_master table
-            // ============================================================
-            if (data.type === "nearby") {
-                const { lat, lng, userId, category, distance = 15 } = data;
+           // ============================================================
+// NEARBY WORKERS - Using locations table
+// ============================================================
+if (data.type === "nearby") {
+    const { lat, lng, userId, category, distance = 15 } = data;
 
-                console.log(`📍 Nearby request: lat=${lat}, lng=${lng}, category=${category}`);
+    console.log(`📍 Nearby request: lat=${lat}, lng=${lng}, category=${category}`);
 
-                try {
-                    let sql = `
-                        SELECT 
-                            u.member_id AS userId,
-                            CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
-                            u.lat AS latitude,
-                            u.lng AS longitude,
-                            u.member_mobileno AS phone,
-                            u.member_emailid AS email,
-                            u.member_gender AS gender,
-                            u.category AS category_id,
-                            ROUND(
-                                (6371 * acos(
-                                    cos(radians(?)) * cos(radians(u.lat)) * 
-                                    cos(radians(u.lng) - radians(?)) + 
-                                    sin(radians(?)) * sin(radians(u.lat))
-                                )), 2
-                            ) AS distance
-                        FROM member_master u
-                        WHERE u.member_user_type = 1
-                          AND u.member_status = 1
-                          AND u.member_approval_status = 1
-                          AND u.lat IS NOT NULL 
-                          AND u.lat != 0.0
-                    `;
+    try {
+        let sql = `
+            SELECT 
+                u.member_id AS userId,
+                CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
+                l.latitude AS latitude,
+                l.longitude AS longitude,
+                u.member_mobileno AS phone,
+                u.member_emailid AS email,
+                u.category AS category_id,
+                ROUND(
+                    (6371 * acos(
+                        cos(radians(?)) * cos(radians(l.latitude)) * 
+                        cos(radians(l.longitude) - radians(?)) + 
+                        sin(radians(?)) * sin(radians(l.latitude))
+                    )), 2
+                ) AS distance
+            FROM member_master u
+            INNER JOIN locations l ON u.member_id = l.user_id
+            WHERE u.member_user_type = 1
+              AND u.member_status = 1
+              AND u.member_approval_status = 1
+              AND l.latitude IS NOT NULL 
+              AND l.latitude != 0.0
+        `;
 
-                    const params = [lat, lng, lat];
+        const params = [lat, lng, lat];
 
-                    // Add category filter if provided
-                    if (category && category !== 0) {
-                        sql += ` AND u.category = ?`;
-                        params.push(category);
-                    }
+        if (category && category !== 0) {
+            sql += ` AND u.category = ?`;
+            params.push(category);
+        }
 
-                    sql += `
-                        HAVING distance <= ?
-                        GROUP BY u.member_id
-                        ORDER BY distance ASC
-                        LIMIT 50
-                    `;
-                    params.push(distance);
+        sql += `
+            HAVING distance <= ?
+            GROUP BY u.member_id
+            ORDER BY distance ASC
+            LIMIT 50
+        `;
+        params.push(distance);
 
-                    const [rows] = await pool.query(sql, params);
+        const [rows] = await pool.query(sql, params);
 
-                    console.log(`✅ Found ${rows.length} nearby workers`);
+        console.log(`✅ Found ${rows.length} nearby workers`);
 
-                    ws.send(JSON.stringify({
-                        type: "nearby",
-                        users: rows
-                    }));
+        ws.send(JSON.stringify({
+            type: "nearby",
+            users: rows
+        }));
 
-                } catch (dbError) {
-                    console.error('❌ Database error:', dbError);
-                    ws.send(JSON.stringify({
-                        type: "nearby",
-                        users: [],
-                        error: "Database error: " + dbError.message
-                    }));
-                }
-            }
+    } catch (dbError) {
+        console.error('❌ Database error:', dbError);
+        ws.send(JSON.stringify({
+            type: "nearby",
+            users: [],
+            error: "Database error: " + dbError.message
+        }));
+    }
+}
 
             // 3. LOCATION UPDATE
             if (data.type === "location") {
