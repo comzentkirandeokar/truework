@@ -162,7 +162,7 @@ app.get('/api/realtime/check-worker', async (req, res) => {
                 if (rows.length > 0) {
                     let workerQuery = '';
                     if (table === 'member_master') {
-                        workerQuery = `SELECT member_id AS id, member_fname AS name, member_user_type, member_status, lat, lng FROM ${table} WHERE member_user_type = 1`;
+                        workerQuery = `SELECT member_id AS id, member_fname AS name, member_user_type, member_status, lat, lng FROM ${table} WHERE member_user_type = 2`;
                     } else {
                         workerQuery = `SELECT id, name, user_type, is_online, lat, lng FROM ${table} WHERE user_type = 'WORKER' OR role = 'WORKER'`;
                     }
@@ -228,116 +228,116 @@ wss.on('connection', (ws) => {
                 }));
             }
 
-           // ============================================================
-// NEARBY WORKERS - Using locations table
-// ============================================================
-if (data.type === "nearby") {
-    const { lat, lng, userId, category, distance = 15 } = data;
+            // ============================================================
+            // 2. NEARBY WORKERS - Using locations table (FIXED)
+            // ============================================================
+            if (data.type === "nearby") {
+                const { lat, lng, userId, category, distance = 15 } = data;
 
-    console.log(`📍 Nearby request: lat=${lat}, lng=${lng}, category=${category}`);
+                console.log(`📍 Nearby request: lat=${lat}, lng=${lng}, category=${category}`);
 
-    try {
-        let sql = `
-            SELECT 
-    u.member_id AS userId,
-    CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
-    l.latitude AS latitude,
-    l.longitude AS longitude,
-    u.member_mobileno AS phone,
-    u.member_emailid AS email,
-    u.category AS category_id,
-    ROUND(
-        (6371 * acos(
-            cos(radians(19.87608)) * cos(radians(l.latitude)) * 
-            cos(radians(l.longitude) - radians(75.39219)) + 
-            sin(radians(19.87608)) * sin(radians(l.latitude))
-        )), 2
-    ) AS distance
-FROM member_master u
-INNER JOIN locations l ON u.member_id = l.user_id
-WHERE u.member_user_type = 2
-  AND u.member_status = 1
-  AND l.latitude IS NOT NULL 
-  AND l.latitude != 0.0
-HAVING distance <= 15
-ORDER BY distance ASC
-LIMIT 50;
-        `;
+                try {
+                    let sql = `
+                        SELECT 
+                            u.member_id AS userId,
+                            CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
+                            l.latitude AS latitude,
+                            l.longitude AS longitude,
+                            u.member_mobileno AS phone,
+                            u.member_emailid AS email,
+                            u.category AS category_id,
+                            ROUND(
+                                (6371 * acos(
+                                    cos(radians(?)) * cos(radians(l.latitude)) * 
+                                    cos(radians(l.longitude) - radians(?)) + 
+                                    sin(radians(?)) * sin(radians(l.latitude))
+                                )), 2
+                            ) AS distance
+                        FROM member_master u
+                        INNER JOIN locations l ON u.member_id = l.user_id
+                        WHERE u.member_user_type = 2
+                          AND u.member_status = 1
+                          AND u.member_approval_status = 1
+                          AND l.latitude IS NOT NULL 
+                          AND l.latitude != 0.0
+                    `;
 
-        const params = [lat, lng, lat];
+                    const params = [lat, lng, lat];
 
-        if (category && category !== 0) {
-            sql += ` AND u.category = ?`;
-            params.push(category);
-        }
+                    if (category && category !== 0) {
+                        sql += ` AND u.category = ?`;
+                        params.push(category);
+                    }
 
-       sql += `
-            GROUP BY u.member_id
-            HAVING distance <= ?
-            ORDER BY distance ASC
-            LIMIT 50
-        `;
-        params.push(distance);
+                    sql += `
+                        GROUP BY u.member_id
+                        HAVING distance <= ?
+                        ORDER BY distance ASC
+                        LIMIT 50
+                    `;
+                    params.push(distance);
 
-        const [rows] = await pool.query(sql, params);
+                    const [rows] = await pool.query(sql, params);
 
-        console.log(`✅ Found ${rows.length} nearby workers`);
+                    console.log(`✅ Found ${rows.length} nearby workers`);
 
-        ws.send(JSON.stringify({
-            type: "nearby",
-            users: rows
-        }));
+                    ws.send(JSON.stringify({
+                        type: "nearby",
+                        users: rows
+                    }));
 
-    } catch (dbError) {
-        console.error('❌ Database error:', dbError);
-        ws.send(JSON.stringify({
-            type: "nearby",
-            users: [],
-            error: "Database error: " + dbError.message
-        }));
-    }
-}
+                } catch (dbError) {
+                    console.error('❌ Database error:', dbError);
+                    ws.send(JSON.stringify({
+                        type: "nearby",
+                        users: [],
+                        error: "Database error: " + dbError.message
+                    }));
+                }
+            }
 
+            // ============================================================
             // 3. LOCATION UPDATE - Save to locations table
-if (data.type === "location") {
-    const { driverId, lat, lng } = data;
-    driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
+            // ============================================================
+            if (data.type === "location") {
+                const { driverId, lat, lng } = data;
+                driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
 
-    try {
-        // Check if location exists
-        const [existing] = await pool.query(
-            'SELECT id FROM locations WHERE user_id = ?',
-            [driverId]
-        );
+                try {
+                    // Check if location exists
+                    const [existing] = await pool.query(
+                        'SELECT id FROM locations WHERE user_id = ?',
+                        [driverId]
+                    );
 
-        if (existing.length > 0) {
-            await pool.query(
-                'UPDATE locations SET latitude = ?, longitude = ?, created_at = NOW() WHERE user_id = ?',
-                [lat, lng, driverId]
-            );
-        } else {
-            await pool.query(
-                'INSERT INTO locations (user_id, latitude, longitude, created_at) VALUES (?, ?, ?, NOW())',
-                [driverId, lat, lng]
-            );
-        }
-        console.log(`📍 Location saved for user ${driverId}: ${lat}, ${lng}`);
-    } catch (updateError) {
-        console.error('❌ Location update error:', updateError);
-    }
+                    if (existing.length > 0) {
+                        await pool.query(
+                            'UPDATE locations SET latitude = ?, longitude = ?, created_at = NOW() WHERE user_id = ?',
+                            [lat, lng, driverId]
+                        );
+                    } else {
+                        await pool.query(
+                            'INSERT INTO locations (user_id, latitude, longitude, created_at) VALUES (?, ?, ?, NOW())',
+                            [driverId, lat, lng]
+                        );
+                    }
+                    console.log(`📍 Location saved for user ${driverId}: ${lat}, ${lng}`);
+                } catch (updateError) {
+                    console.error('❌ Location update error:', updateError);
+                }
 
-    // Broadcast to all clients
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-                type: "location",
-                driverId,
-                lat,
-                lng
-            }));
-        }
-    });
-}
+                // Broadcast to all clients
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: "location",
+                            driverId,
+                            lat,
+                            lng
+                        }));
+                    }
+                });
+            }
 
         } catch (err) {
             console.error("❌ Error:", err);
