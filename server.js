@@ -111,6 +111,26 @@ app.get('/api/realtime/health', (req, res) => {
     });
 });
 
+// ============================================================
+// TEST DATABASE CONNECTION
+// ============================================================
+app.get('/api/realtime/db-test', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT 1 + 1 AS result');
+        res.json({
+            success: true,
+            message: 'Database connected!',
+            result: rows[0].result
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Database connection failed',
+            error: error.message
+        });
+    }
+});
+
 // 404 Handler
 app.use((req, res) => {
     console.log(`❌ 404 Not Found: ${req.method} ${req.url}`);
