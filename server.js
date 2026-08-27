@@ -255,9 +255,8 @@ if (data.type === "nearby") {
                 ) AS distance
             FROM member_master u
             INNER JOIN locations l ON u.member_id = l.user_id
-            WHERE u.member_user_type = 1
+            WHERE u.member_user_type = 2
               AND u.member_status = 1
-              AND u.member_approval_status = 1
               AND l.latitude IS NOT NULL 
               AND l.latitude != 0.0
         `;
