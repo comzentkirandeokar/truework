@@ -200,6 +200,7 @@ function unregisterUser(ws, userId) {
 function handleMessage(ws, message) {
     try {
         const data = JSON.parse(message);
+        console.log('📩 Received:', data);
 
         // REGISTER
         if (data.type === "register" && data.userId) {
@@ -211,10 +212,12 @@ function handleMessage(ws, message) {
 
             ws.send(JSON.stringify({
                 type: "registered",
-                userId: data.userId
+                userId: data.userId,
+                message: "Successfully registered"
             }));
 
-            console.log(`User registered: ${data.userId}`);
+            console.log(`✅ User registered: ${data.userId}`);
+            console.log(`📋 All clients: ${Object.keys(clients)}`);
 
             updateNearbyWatchers();
         }
@@ -231,8 +234,10 @@ function handleMessage(ws, message) {
             ws.send(JSON.stringify({ type: "unsubscribed", topic: data.topic }));
         }
 
-        // LOCATION UPDATE
+        // LOCATION UPDATE - Save to locations table
         if (data.type === "location" && data.userId && data.lat != null && data.lng != null) {
+            console.log(`📍 Location update from user ${data.userId}: ${data.lat}, ${data.lng}`);
+            
             saveUserLocation(data.userId, data.lat, data.lng);
             publish(`user-${data.userId}`, { type: "location", ...data });
             broadcastLocation(data.userId, data.lat, data.lng);
@@ -240,8 +245,9 @@ function handleMessage(ws, message) {
             updateNearbyWatchers();
         }
 
-        // NEARBY REQUEST
+        // NEARBY REQUEST - Get users from locations table
         if (data.type === "nearby" && data.lat != null && data.lng != null) {
+            console.log(`📍 Nearby request from user ${data.userId}: lat=${data.lat}, lng=${data.lng}, category=${data.category}`);
 
             // Save watcher config
             nearbyWatchers[data.userId] = {
@@ -254,10 +260,11 @@ function handleMessage(ws, message) {
             getNearbyUsers(
                 data.lat,
                 data.lng,
-                data.distance,
+                data.distance || 15,
                 data.category,
                 data.userId
             ).then(users => {
+                console.log(`✅ Found ${users.length} nearby workers`);
 
                 const registeredNearbyUsers =
                     users.filter(user => clients[user.userId]);
@@ -265,6 +272,13 @@ function handleMessage(ws, message) {
                 ws.send(JSON.stringify({
                     type: "nearby",
                     users: registeredNearbyUsers
+                }));
+            }).catch(err => {
+                console.error('❌ Nearby query error:', err);
+                ws.send(JSON.stringify({
+                    type: "nearby",
+                    users: [],
+                    error: "Database error: " + err.message
                 }));
             });
         }
@@ -280,7 +294,11 @@ function handleMessage(ws, message) {
         }
 
     } catch (err) {
-        console.error("Error handling message:", err);
+        console.error("❌ Error handling message:", err);
+        ws.send(JSON.stringify({
+            type: "error",
+            message: "Invalid request format"
+        }));
     }
 }
 
@@ -294,11 +312,20 @@ function handleDisconnect(ws) {
         if (clients[userId] === ws) {
             delete clients[userId];
             delete nearbyWatchers[userId];
-            console.log(`User disconnected: ${userId}`);
+            console.log(`❌ User disconnected: ${userId}`);
+            console.log(`📋 Remaining clients: ${Object.keys(clients)}`);
             updateNearbyWatchers();
             break;
         }
     }
 }
 
-module.exports = { handleMessage, handleDisconnect, clients };
+// Get connected clients
+const getClients = () => clients;
+
+module.exports = { 
+    handleMessage, 
+    handleDisconnect, 
+    clients,
+    getClients
+};
