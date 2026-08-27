@@ -160,9 +160,13 @@ app.get('/api/realtime/check-worker', async (req, res) => {
             try {
                 const [rows] = await pool.query(`SHOW TABLES LIKE "${table}"`);
                 if (rows.length > 0) {
-                    const [workers] = await pool.query(`
-                        SELECT * FROM ${table} WHERE user_type = 'WORKER' OR role = 'WORKER' LIMIT 5
-                    `);
+                    let workerQuery = '';
+                    if (table === 'member_master') {
+                        workerQuery = `SELECT member_id AS id, member_fname AS name, member_user_type, member_status, lat, lng FROM ${table} WHERE member_user_type = 1`;
+                    } else {
+                        workerQuery = `SELECT id, name, user_type, is_online, lat, lng FROM ${table} WHERE user_type = 'WORKER' OR role = 'WORKER'`;
+                    }
+                    const [workers] = await pool.query(workerQuery + ' LIMIT 5');
                     if (workers.length > 0) {
                         result.workers_found.push({
                             table: table,
@@ -224,7 +228,9 @@ wss.on('connection', (ws) => {
                 }));
             }
 
-            // 2. NEARBY WORKERS
+            // ============================================================
+            // 2. NEARBY WORKERS - Updated for member_master table
+            // ============================================================
             if (data.type === "nearby") {
                 const { lat, lng, userId, category, distance = 15 } = data;
 
@@ -233,13 +239,14 @@ wss.on('connection', (ws) => {
                 try {
                     let sql = `
                         SELECT 
-                            u.id AS userId,
-                            u.name,
+                            u.member_id AS userId,
+                            CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
                             u.lat AS latitude,
                             u.lng AS longitude,
-                            u.profile_photo,
-                            u.rating,
-                            u.category_id,
+                            u.member_mobileno AS phone,
+                            u.member_emailid AS email,
+                            u.member_gender AS gender,
+                            u.category AS category_id,
                             ROUND(
                                 (6371 * acos(
                                     cos(radians(?)) * cos(radians(u.lat)) * 
@@ -247,23 +254,25 @@ wss.on('connection', (ws) => {
                                     sin(radians(?)) * sin(radians(u.lat))
                                 )), 2
                             ) AS distance
-                        FROM users u
-                        WHERE u.user_type = 'WORKER'
-                          AND u.is_online = 1
+                        FROM member_master u
+                        WHERE u.member_user_type = 1
+                          AND u.member_status = 1
+                          AND u.member_approval_status = 1
                           AND u.lat IS NOT NULL 
                           AND u.lat != 0.0
                     `;
 
                     const params = [lat, lng, lat];
 
+                    // Add category filter if provided
                     if (category && category !== 0) {
-                        sql += ` AND u.category_id = ?`;
+                        sql += ` AND u.category = ?`;
                         params.push(category);
                     }
 
                     sql += `
                         HAVING distance <= ?
-                        GROUP BY u.id
+                        GROUP BY u.member_id
                         ORDER BY distance ASC
                         LIMIT 50
                     `;
@@ -294,8 +303,9 @@ wss.on('connection', (ws) => {
                 driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
 
                 try {
+                    // Update member_master table
                     await pool.query(
-                        'UPDATE users SET lat = ?, lng = ?, last_location_update = NOW() WHERE id = ?',
+                        'UPDATE member_master SET lat = ?, lng = ? WHERE member_id = ?',
                         [lat, lng, driverId]
                     );
                 } catch (updateError) {
