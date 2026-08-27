@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const mysql = require('mysql2/promise'); // <-- Add this
+const mysql = require('mysql2/promise');
 
 const app = express();
 app.use(express.json());
@@ -84,9 +84,6 @@ app.get('/api/realtime/health', (req, res) => {
     });
 });
 
-// ============================================================
-// TEST DATABASE CONNECTION
-// ============================================================
 app.get('/api/realtime/db-test', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT 1 + 1 AS result');
@@ -99,6 +96,92 @@ app.get('/api/realtime/db-test', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Database connection failed',
+            error: error.message
+        });
+    }
+});
+
+// ============================================================
+// DEBUG: SHOW DATABASE TABLES AND STRUCTURE
+// ============================================================
+app.get('/api/realtime/db-tables', async (req, res) => {
+    try {
+        const [tables] = await pool.query('SHOW TABLES');
+        
+        let usersStructure = null;
+        try {
+            const [structure] = await pool.query('DESCRIBE users');
+            usersStructure = structure;
+        } catch (e) {
+            usersStructure = { error: 'users table does not exist' };
+        }
+        
+        let memberStructure = null;
+        try {
+            const [structure] = await pool.query('DESCRIBE member_master');
+            memberStructure = structure;
+        } catch (e) {
+            memberStructure = { error: 'member_master table does not exist' };
+        }
+        
+        let workersStructure = null;
+        try {
+            const [structure] = await pool.query('DESCRIBE workers');
+            workersStructure = structure;
+        } catch (e) {
+            workersStructure = { error: 'workers table does not exist' };
+        }
+        
+        res.json({
+            success: true,
+            tables: tables.map(t => Object.values(t)[0]),
+            users_structure: usersStructure,
+            member_master_structure: memberStructure,
+            workers_structure: workersStructure
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Database query failed',
+            error: error.message
+        });
+    }
+});
+
+// ============================================================
+// DEBUG: CHECK WORKER DATA
+// ============================================================
+app.get('/api/realtime/check-worker', async (req, res) => {
+    try {
+        const tables = ['users', 'member_master', 'workers'];
+        let result = { success: true, tables_checked: [], workers_found: [] };
+
+        for (const table of tables) {
+            try {
+                const [rows] = await pool.query(`SHOW TABLES LIKE "${table}"`);
+                if (rows.length > 0) {
+                    const [workers] = await pool.query(`
+                        SELECT * FROM ${table} WHERE user_type = 'WORKER' OR role = 'WORKER' LIMIT 5
+                    `);
+                    if (workers.length > 0) {
+                        result.workers_found.push({
+                            table: table,
+                            count: workers.length,
+                            sample: workers
+                        });
+                    }
+                }
+                result.tables_checked.push(table);
+            } catch (e) {
+                // Silently skip
+            }
+        }
+
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Query failed',
             error: error.message
         });
     }
@@ -124,9 +207,7 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             console.log('📩 Received:', data);
 
-            // ============================================================
             // 1. REGISTER USER
-            // ============================================================
             if (data.type === "register") {
                 const userId = String(data.userId);
                 clients[userId] = ws;
@@ -143,9 +224,7 @@ wss.on('connection', (ws) => {
                 }));
             }
 
-            // ============================================================
             // 2. NEARBY WORKERS
-            // ============================================================
             if (data.type === "nearby") {
                 const { lat, lng, userId, category, distance = 15 } = data;
 
@@ -204,14 +283,12 @@ wss.on('connection', (ws) => {
                     ws.send(JSON.stringify({
                         type: "nearby",
                         users: [],
-                        error: "Database error"
+                        error: "Database error: " + dbError.message
                     }));
                 }
             }
 
-            // ============================================================
             // 3. LOCATION UPDATE
-            // ============================================================
             if (data.type === "location") {
                 const { driverId, lat, lng } = data;
                 driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
