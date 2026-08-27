@@ -239,26 +239,29 @@ if (data.type === "nearby") {
     try {
         let sql = `
             SELECT 
-                u.member_id AS userId,
-                CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
-                l.latitude AS latitude,
-                l.longitude AS longitude,
-                u.member_mobileno AS phone,
-                u.member_emailid AS email,
-                u.category AS category_id,
-                ROUND(
-                    (6371 * acos(
-                        cos(radians(?)) * cos(radians(l.latitude)) * 
-                        cos(radians(l.longitude) - radians(?)) + 
-                        sin(radians(?)) * sin(radians(l.latitude))
-                    )), 2
-                ) AS distance
-            FROM member_master u
-            INNER JOIN locations l ON u.member_id = l.user_id
-            WHERE u.member_user_type = 2
-              AND u.member_status = 1
-              AND l.latitude IS NOT NULL 
-              AND l.latitude != 0.0
+    u.member_id AS userId,
+    CONCAT(u.member_fname, ' ', u.member_lastname) AS name,
+    l.latitude AS latitude,
+    l.longitude AS longitude,
+    u.member_mobileno AS phone,
+    u.member_emailid AS email,
+    u.category AS category_id,
+    ROUND(
+        (6371 * acos(
+            cos(radians(19.87608)) * cos(radians(l.latitude)) * 
+            cos(radians(l.longitude) - radians(75.39219)) + 
+            sin(radians(19.87608)) * sin(radians(l.latitude))
+        )), 2
+    ) AS distance
+FROM member_master u
+INNER JOIN locations l ON u.member_id = l.user_id
+WHERE u.member_user_type = 2
+  AND u.member_status = 1
+  AND l.latitude IS NOT NULL 
+  AND l.latitude != 0.0
+HAVING distance <= 15
+ORDER BY distance ASC
+LIMIT 50;
         `;
 
         const params = [lat, lng, lat];
