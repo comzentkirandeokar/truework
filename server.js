@@ -28,7 +28,7 @@ let driverLocations = {};
 // ROUTES
 // ============================================================
 app.post('/api/realtime/emit', (req, res) => {
-    const { userId, event, data } = req.body;
+    const { userId, event, data, broadcast } = req.body;
     const apiKey = req.headers['x-api-key'];
 
     const validApiKey = (process.env.WEBSOCKET_API_KEY || 'your-secret-key').trim();
@@ -38,6 +38,27 @@ app.post('/api/realtime/emit', (req, res) => {
         return res.status(401).json({
             success: false,
             message: 'Invalid API key'
+        });
+    }
+
+    // Broadcast to all connected clients
+    if (broadcast) {
+        let sentCount = 0;
+        wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                    event: event || 'TEST_EVENT',
+                    data: data || {}
+                }));
+                sentCount++;
+            }
+        });
+        return res.json({
+            success: true,
+            broadcast: true,
+            sent_count: sentCount,
+            event: event || 'TEST_EVENT',
+            message: 'Broadcast event sent successfully'
         });
     }
 
