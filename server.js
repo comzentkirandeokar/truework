@@ -297,14 +297,15 @@ wss.on('connection', (ws) => {
             }
 
             // ============================================================
-            // 3. LOCATION UPDATE - Save to locations table
+            // 3. LOCATION UPDATE (Flutter Live GPS Stream)
             // ============================================================
             if (data.type === "location") {
-                const { driverId, lat, lng } = data;
-                driverLocations[driverId] = { lat, lng, timestamp: Date.now() };
+                const driverId = String(data.userId || data.driverId);
+                const { lat, lng, booking_id, heading = 0.0, speed = 0.0 } = data;
+                driverLocations[driverId] = { lat, lng, heading, speed, timestamp: Date.now() };
 
                 try {
-                    // Check if location exists
+                    // Update or insert into locations table
                     const [existing] = await pool.query(
                         'SELECT id FROM locations WHERE user_id = ?',
                         [driverId]
@@ -321,19 +322,50 @@ wss.on('connection', (ws) => {
                             [driverId, lat, lng]
                         );
                     }
-                    console.log(`📍 Location saved for user ${driverId}: ${lat}, ${lng}`);
                 } catch (updateError) {
                     console.error('❌ Location update error:', updateError);
                 }
 
-                // Broadcast to all clients
+                // If booking_id is provided, relay WORKER_LOCATION_UPDATE to active Customer socket
+                if (booking_id) {
+                    try {
+                        const [bookings] = await pool.query(
+                            'SELECT customer_id FROM bookings WHERE booking_id = ?',
+                            [booking_id]
+                        );
+                        if (bookings.length > 0) {
+                            const customerId = String(bookings[0].customer_id);
+                            if (clients[customerId]) {
+                                clients[customerId].send(JSON.stringify({
+                                    event: 'WORKER_LOCATION_UPDATE',
+                                    data: {
+                                        booking_id: Number(booking_id),
+                                        worker_id: Number(driverId),
+                                        lat: Number(lat),
+                                        lng: Number(lng),
+                                        heading: Number(heading),
+                                        speed: Number(speed),
+                                        timestamp: new Date().toISOString()
+                                    }
+                                }));
+                            }
+                        }
+                    } catch (bErr) {
+                        console.error('❌ Booking customer relay error:', bErr);
+                    }
+                }
+
+                // Broadcast location frame to listening map clients
                 wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify({
                             type: "location",
                             driverId,
+                            userId: driverId,
                             lat,
-                            lng
+                            lng,
+                            heading,
+                            speed
                         }));
                     }
                 });
